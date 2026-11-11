@@ -123,13 +123,13 @@ class QEAAIKernel:
 
         self.bus.publish(
             "device/band/state",
-            {"kind": "cyborg_band", "pack_v": report.pack_voltage, "soc": report.state_of_charge,
+            {"kind": "cyborg_band", "source": "sim", "pack_v": report.pack_voltage, "soc": report.state_of_charge,
              "harvest_uW": report.harvest_w * 1e6, "brownout": report.brownout},
             sender="band",
         )
         self.bus.publish(
             "device/flyer/state",
-            {"kind": "game", "alt_m": flight.altitude_m, "speed": flight.speed_mps,
+            {"kind": "game", "source": "sim", "alt_m": flight.altitude_m, "speed": flight.speed_mps,
              "heading": flight.heading_deg, "airborne": flight.airborne},
             sender="flyer",
         )

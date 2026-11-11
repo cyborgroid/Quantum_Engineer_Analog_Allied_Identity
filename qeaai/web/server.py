@@ -6,13 +6,20 @@
     GET  /api/stream    Server-Sent Events, 틱마다 전체 상태
     POST /api/control   {"gesture": "fist"} | {"mode": "demo"|"manual"} |
                         {"wearer": "owner"|"impostor"} | {"recharge": true} | {"reset": true}
+    GET  /api/things                       W3C WoT Thing Description 목록 (디지털 트윈 표준)
+    GET  /api/things/<id>                  장치 하나의 TD
+    GET  /api/things/<id>/properties[/<p>] 현재 속성 값
+
+실제 세계 연결(qeaai.iot.realworld)이 있으면 실측 센서·실제 날씨·MQTT 장치가 트윈에 들어온다.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import threading
+import zlib
 import time
 from collections import deque
 from http import HTTPStatus
@@ -20,6 +27,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ..bio.emg import CHANNELS, GESTURES, EMGSimulator, UserPhysiology
+from ..iot.realworld import MAX_THINGS, RealWorld, parse_thing_message
+from ..iot.things import thing_description
 from ..materials.quantum import capacitance_breakdown
 from ..system.kernel import QEAAIKernel
 
@@ -29,7 +38,14 @@ CONTENT_TYPES = {
     ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".svg": "image/svg+xml",
+    ".glb": "model/gltf-binary",
+    ".gltf": "model/gltf+json",
+    ".bin": "application/octet-stream",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".ktx2": "image/ktx2",
 }
+MODEL_PATH = "assets/models/flyer.glb"  # Blender 등에서 export 한 glTF 2.0 기체 모델 (선택)
 
 # 웹 자동 데모: 이륙 -> 순항 -> 우/좌 선회 -> 감속 -> 착륙 -> 정지 (약 50 초 반복)
 WEB_DEMO_LOOP: list[tuple[str, float]] = [
@@ -58,14 +74,27 @@ BEACONS: dict[str, tuple[float, float]] = {
 BEACON_RANGE_M = 150.0
 LABEL_KO = {"rest": "휴식", "fist": "주먹", "open": "펴기", "wrist_left": "손목 좌", "wrist_right": "손목 우"}
 EMG_POINTS_PER_WINDOW = 50
+AUTO_RECHARGE_SOC = 0.10
+
+# 실제 장치들의 VR 배치 (시뮬레이터 좌표, m)
+GATEWAY_ID, WEATHER_ID = "edge-gateway", "weather"
+FIXED_PLACES = {GATEWAY_ID: (-45.0, 40.0), WEATHER_ID: (32.0, -8.0)}
+MQTT_RING_CENTER, MQTT_RING_RADIUS = (-110.0, 70.0), 38.0
+RESERVED_IDS = {"band", "flyer", GATEWAY_ID, WEATHER_ID, *BEACONS}
+SKIN_TEMP_C = 33.0  # 손목 피부 온도: 밴드 전해질 온도 = 피부와 외기의 혼합
 
 
 class Simulation:
-    def __init__(self, seed: int = 0):
+    def __init__(self, seed: int = 0, realworld: RealWorld | None = None):
         self.seed = seed
+        self.realworld = realworld
         self.cond = threading.Condition()
         self.running = False
         self._thread: threading.Thread | None = None
+        self.external: dict[str, dict] = {}  # MQTT 로 들어온 실제 장치 (리셋해도 유지)
+        self.places: dict[str, tuple[float, float]] = dict(FIXED_PLACES)
+        if realworld and realworld.broker:
+            realworld.broker.on_publish = self.ingest_mqtt
         self._build()
 
     # --- 구성 -------------------------------------------------------------
@@ -84,6 +113,83 @@ class Simulation:
         self.history: deque[dict] = deque(maxlen=150)
         self.payload: str | None = None
         self.version = getattr(self, "version", 0)
+        self.ticks = 0
+        self.env_snapshot: dict | None = None
+        self._wire_realworld()
+
+    # --- 실제 세계 ----------------------------------------------------------
+    def _wire_realworld(self) -> None:
+        rw = self.realworld
+        bus = self.kernel.bus
+        if rw and rw.broker:
+            broker = rw.broker
+
+            def bridge(msg) -> None:  # 트윈 -> 바깥 MQTT (retained)
+                if msg.topic.startswith("device/"):
+                    broker.publish(f"qeaai/twin/{msg.topic.split('/')[1]}/state", msg.payload, retain=True)
+                else:
+                    broker.publish(f"qeaai/{msg.topic}", msg.payload, retain=True)
+
+            bus.subscribe("device/*/state", bridge)
+            bus.subscribe("neural/intent", bridge)
+        for tid, thing in self.external.items():  # 리셋 후에도 실제 장치는 트윈에 남는다
+            bus.publish(f"device/{tid}/state", {"kind": thing["kind"], "source": "mqtt", **thing["state"]}, sender="mqtt-cache")
+        self._publish_real(force=True)
+
+    def _publish_real(self, force: bool = False) -> None:
+        rw = self.realworld
+        if not rw or (not force and self.ticks % 5):  # 1 초마다
+            return
+        bus = self.kernel.bus
+        gw = rw.gateway_state()
+        if gw:
+            bus.publish(f"device/{GATEWAY_ID}/state", gw, sender="sysfs")
+        weather = rw.weather_state()
+        if weather:
+            bus.publish(f"device/{WEATHER_ID}/state", weather, sender="open-meteo")
+            if weather.get("temp_c") is not None:  # 실제 기온 -> SNSS 전해질 온도 -> 이온전도도/ESR/양자 커패시턴스
+                cell = self.kernel.power.pack.cell
+                t = 0.6 * SKIN_TEMP_C + 0.4 * float(weather["temp_c"])
+                if abs(cell.electrolyte.temperature_c - t) > 0.05:
+                    cell.electrolyte = dataclasses.replace(cell.electrolyte, temperature_c=round(t, 2))
+        self.env_snapshot = rw.env.snapshot()
+
+    def ingest_mqtt(self, topic: str, payload: bytes, client_id: str) -> None:
+        """MQTT 브로커 스레드에서 호출: 실제 장치 데이터 -> 트윈."""
+        parsed = parse_thing_message(topic, payload)
+        if not parsed:
+            return
+        tid, props = parsed
+        if tid in RESERVED_IDS:
+            return
+        with self.cond:
+            if tid not in self.external and len(self.external) >= MAX_THINGS:
+                return
+            thing = self.external.setdefault(tid, {"kind": "mqtt_device", "state": {}})
+            if isinstance(props.get("kind"), str):
+                thing["kind"] = props.pop("kind")[:32]
+            props.pop("kind", None)
+            thing["state"].update(props)
+            x, y = thing["state"].get("x"), thing["state"].get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)) and not isinstance(x, bool):
+                self.places[tid] = (float(x), float(y))
+            elif tid not in self.places:
+                a = (zlib.crc32(tid.encode()) % 360) * math.pi / 180
+                self.places[tid] = (MQTT_RING_CENTER[0] + MQTT_RING_RADIUS * math.cos(a),
+                                    MQTT_RING_CENTER[1] + MQTT_RING_RADIUS * math.sin(a))
+            self.kernel.bus.publish(f"device/{tid}/state", {"kind": thing["kind"], "source": "mqtt", **props},
+                                    sender=f"mqtt:{client_id}")
+
+    def things(self, base_url: str) -> list[dict]:
+        rw = self.realworld
+        mqtt_url = rw.broker.url if rw and rw.broker else None
+        with self.cond:
+            scene = self.kernel.twin.scene()
+        return [thing_description(d, base_url, mqtt_url) for d in scene]
+
+    def thing_state(self, tid: str) -> dict | None:
+        with self.cond:
+            return next((d for d in self.kernel.twin.scene() if d["id"] == tid), None)
 
     # --- 제어 -------------------------------------------------------------
     def control(self, cmd: dict) -> dict:
@@ -150,13 +256,31 @@ class Simulation:
         if remaining <= 1e-9:
             self.script_index = (index + 1) % len(WEB_DEMO_LOOP)
             self.script_elapsed = 0.0
+            if self.script_index == 0:
+                self._return_to_base()
         return gesture, f"AUTO {index + 1}/{len(WEB_DEMO_LOOP)} · {LABEL_KO.get(gesture, gesture)} · {remaining:3.1f}s"
+
+    def _return_to_base(self) -> None:
+        """자동 데모 한 바퀴가 끝나면 활주로 시작점으로 (실제 장치가 있는 비행장 주변에서 반복)."""
+        g = self.kernel.game.state
+        if g.airborne:
+            return
+        self.x, self.y = 0.0, 0.0
+        g.heading_deg, g.speed_mps, g.bank_deg, g.throttle = 0.0, 0.0, 0.0, 0.0
+        self.trail.clear()
 
     def step(self) -> dict:
         """한 틱 진행하고 브라우저로 보낼 상태를 만든다 (cond 를 잡은 상태에서 호출)."""
         k = self.kernel
         dt = k.dt
         gesture, script_label = self._current_gesture()
+        # 자동 데모는 계속 켜 둘 수 있도록 방전 직전에 충전 (실제 근육 발전은 uW 수준이라 충전이 안 됨)
+        if self.mode == "demo" and k.power.pack.state_of_charge < AUTO_RECHARGE_SOC:
+            k.power.pack.cell.voltage = k.power.pack.cell.max_voltage
+            self.notice_ticks = 15
+        if getattr(self, "notice_ticks", 0) > 0:
+            self.notice_ticks -= 1
+            script_label += " · ⚡ 자동 충전"
         prev_alt = k.game.state.altitude_m
         frame = k.tick(gesture)
         f = frame.flight
@@ -164,6 +288,12 @@ class Simulation:
         h = math.radians(f.heading_deg)
         self.x += f.speed_mps * math.sin(h) * dt
         self.y += f.speed_mps * math.cos(h) * dt
+        wind = self.realworld.env.wind_vector() if self.realworld else (0.0, 0.0)
+        if f.airborne:  # 실제 바람이 기체를 밀어낸다 (대지속도 = 대기속도 + 풍속)
+            self.x += wind[0] * dt
+            self.y += wind[1] * dt
+        self.ticks += 1
+        self._publish_real()
         climb = (f.altitude_m - prev_alt) / dt
         pitch = math.degrees(math.atan2(climb, max(f.speed_mps, 1.0))) if f.airborne or climb else 0.0
         if f.speed_mps > 0.1:
@@ -233,6 +363,11 @@ class Simulation:
             "trail": list(self.trail)[::3],
             "beacons": {bid: {"x": bx, "y": by} for bid, (bx, by) in BEACONS.items()},
             "beacon_range": BEACON_RANGE_M,
+            "places": {tid: {"x": px, "y": py} for tid, (px, py) in self.places.items()},
+            "wind": {"east": wind[0], "north": wind[1]},
+            "env": self.env_snapshot,
+            "mqtt": self.realworld.status() if self.realworld else {"enabled": False},
+            "electrolyte_c": k.power.pack.cell.electrolyte.temperature_c,
             "twin": k.twin.scene(),
             "network": {
                 "delivered": k.bus.delivered,
@@ -274,6 +409,7 @@ class Simulation:
             "pack": {"series": pack.cells_in_series, "parallel": pack.strings_in_parallel,
                      "full_energy_j": pack.full_energy, "esr_ohm": pack.esr},
             "gestures": list(GESTURES),
+            "model_url": MODEL_PATH if (STATIC_DIR / MODEL_PATH).is_file() else None,
             "qe_curve": curve,
         }
 
@@ -302,6 +438,8 @@ def make_handler(sim: Simulation) -> type[BaseHTTPRequestHandler]:
                 return self._stream()
             if path == "/api/info":
                 return self._json(sim.info())
+            if path == "/api/things" or path.startswith("/api/things/"):
+                return self._things(path)
             if path == "/api/state":
                 _, payload = sim.wait_payload(-1, timeout=0)
                 return self._send(HTTPStatus.OK, (payload or "{}").encode(), "application/json; charset=utf-8")
@@ -310,6 +448,28 @@ def make_handler(sim: Simulation) -> type[BaseHTTPRequestHandler]:
             if STATIC_DIR.resolve() not in file.parents or not file.is_file():
                 return self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain")
             self._send(HTTPStatus.OK, file.read_bytes(), CONTENT_TYPES.get(file.suffix, "application/octet-stream"))
+
+        def _things(self, path: str) -> None:
+            host = self.headers.get("Host") or f"{self.server.server_address[0]}:{self.server.server_address[1]}"
+            base = f"http://{host}"
+            parts = [p for p in path.split("/") if p][2:]  # api, things 제외
+            tds = sim.things(base)
+            if not parts:
+                return self._json(tds)
+            tid = parts[0]
+            td = next((t for t in tds if t["id"] == f"urn:qeaai:thing:{tid}"), None)
+            state = sim.thing_state(tid)
+            if td is None or state is None:
+                return self._json({"error": f"no thing {tid!r}"}, HTTPStatus.NOT_FOUND)
+            if len(parts) == 1:
+                return self._json(td)
+            if parts[1] == "properties":
+                props = {k: v for k, v in state.items() if k in td["properties"]}
+                if len(parts) == 2:
+                    return self._json(props)
+                if len(parts) == 3 and parts[2] in props:
+                    return self._json(props[parts[2]])
+            return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
             if self.path != "/api/control":
@@ -344,8 +504,11 @@ def make_handler(sim: Simulation) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def serve(host: str = "127.0.0.1", port: int = 8765, seed: int = 0, port_tries: int = 10) -> None:
-    sim = Simulation(seed=seed)
+def serve(host: str = "127.0.0.1", port: int = 8765, seed: int = 0, port_tries: int = 10,
+          realworld: RealWorld | None = None) -> None:
+    if realworld:
+        realworld.start()
+    sim = Simulation(seed=seed, realworld=realworld)
     handler = make_handler(sim)
     httpd = None
     for p in range(port, port + port_tries):
@@ -360,6 +523,17 @@ def serve(host: str = "127.0.0.1", port: int = 8765, seed: int = 0, port_tries: 
     sim.start()
     url = f"http://{host}:{httpd.server_address[1]}/"
     print(f"QEAAI OS 실행 중: {url}", flush=True)
+    if realworld:
+        loc = realworld.cfg.location
+        print(f"실제 환경  : {loc.name} ({loc.lat:.4f}, {loc.lon:.4f})  날씨 {'Open-Meteo' if realworld.cfg.weather else '꺼짐'}"
+              f"  실측 센서 {'이 컴퓨터' if realworld.sensors else '없음'}", flush=True)
+        if realworld.broker:
+            b = realworld.broker
+            print(f"MQTT 브로커: {b.url}  (장치 -> qeaai/things/<id>/state, 트윈 -> qeaai/twin/#)"
+                  f"{'  인증 사용' if b.username else ''}", flush=True)
+        elif realworld.mqtt_error:
+            print(f"MQTT 브로커: 시작 실패 - {realworld.mqtt_error}", flush=True)
+        print(f"WoT 트윈   : {url}api/things", flush=True)
     print("VS Code: Ctrl+Shift+P -> 'Open Integrated Browser' (또는 'Simple Browser: Show') -> 위 주소 입력", flush=True)
     print("종료: Ctrl+C", flush=True)
     try:
@@ -369,3 +543,5 @@ def serve(host: str = "127.0.0.1", port: int = 8765, seed: int = 0, port_tries: 
     finally:
         sim.stop()
         httpd.server_close()
+        if realworld:
+            realworld.stop()

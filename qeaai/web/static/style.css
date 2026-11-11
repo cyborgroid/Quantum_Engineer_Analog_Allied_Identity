@@ -12,7 +12,8 @@
   --ok: #68d391;
   --danger: #fc5c65;
   --radius: 10px;
-  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif;
   color-scheme: dark;
 }
 
@@ -21,7 +22,9 @@ html, body { margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+  font: 14px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
   min-height: 100vh;
 }
 .num { font-variant-numeric: tabular-nums; font-family: var(--mono); }
@@ -41,6 +44,7 @@ button { font: inherit; color: inherit; }
 .brand .sub { color: var(--accent); font-weight: 500; font-size: 12px; border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; }
 .clock { font-family: var(--mono); color: var(--muted); }
 .script { font-family: var(--mono); font-size: 12px; color: var(--amber); }
+.world { font-size: 12px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
 .spacer { flex: 1; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button { background: transparent; border: 0; padding: 6px 10px; cursor: pointer; color: var(--muted); }
@@ -99,8 +103,21 @@ canvas { display: block; width: 100%; }
 /* --- VR --- */
 .vr { display: flex; flex-direction: column; }
 .vrwrap { position: relative; flex: 1; min-height: 520px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
-#vr { position: absolute; inset: 0; height: 100%; }
+#vr3d, #vr { position: absolute; inset: 0; width: 100%; height: 100%; }
+#vr3d { background: #0a1017; touch-action: none; }
+#vr3d[hidden] { display: none; }
+#vr, #minimap { pointer-events: none; } /* 오버레이는 클릭을 3D 캔버스로 통과 */
 #minimap { position: absolute; top: 10px; right: 10px; width: 170px; height: 170px; border-radius: 8px; border: 1px solid var(--line); }
+.vrtools { position: absolute; left: 10px; top: 52px; display: flex; gap: 6px; flex-wrap: wrap; }
+.vrtools[hidden] { display: none; }
+.vrtools .seg, .vrtools .btn { background: rgba(8, 12, 17, 0.72); backdrop-filter: blur(6px); font-size: 12px; }
+.vrtools .btn.on { box-shadow: inset 0 -2px 0 var(--accent); }
+.engine-badge {
+  position: absolute; right: 10px; top: 188px; max-width: min(460px, calc(100% - 20px)); text-align: right;
+  font: 11px var(--mono); color: var(--muted); background: rgba(8, 12, 17, 0.72);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; pointer-events: none;
+}
+.engine-badge[hidden] { display: none; }
 @media (max-width: 720px) { .vrwrap { min-height: 360px; } #minimap { width: 120px; height: 120px; } }
 
 /* --- muscle --- */
@@ -149,7 +166,10 @@ canvas { display: block; width: 100%; }
 .power-top { display: flex; gap: 12px; align-items: center; }
 #soc { width: 112px; height: 112px; flex: none; }
 .power-top .kv { flex: 1; margin: 0; }
-#spark { height: 80px; margin-top: 10px; background: #0a1017; border-radius: 6px; border: 1px solid var(--line); }
+.chartbox { position: relative; background: #0a1017; border-radius: 6px; border: 1px solid var(--line); padding: 4px; }
+.chartbox canvas { width: 100%; height: 100%; }
+.chart-spark { height: 96px; margin-top: 10px; }
+.chart-qe { height: 190px; }
 .legend { display: flex; gap: 6px 10px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--muted); margin-top: 6px; }
 .sw { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: -4px; }
 .sw-a { background: var(--accent); }
@@ -160,7 +180,6 @@ canvas { display: block; width: 100%; }
 .alert { margin-top: 8px; padding: 8px; border-radius: 6px; border: 1px solid var(--danger); color: var(--danger); background: rgba(252, 92, 101, 0.08); font-size: 12px; }
 
 /* --- QE --- */
-#qe { height: 170px; background: #0a1017; border-radius: 6px; border: 1px solid var(--line); }
 .readout { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
 
 /* --- twin --- */
@@ -169,6 +188,15 @@ canvas { display: block; width: 100%; }
 .card .head { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
 .card .id { font-weight: 700; }
 .card .kind { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.card .id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .meta { color: var(--muted); font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge-src { font: 600 10px var(--mono); letter-spacing: 0.06em; border-radius: 4px; padding: 1px 5px; flex: none; }
+.badge-src.real { color: #0b1a14; background: var(--ok); }
+.badge-src.sim { color: var(--muted); border: 1px solid var(--line); }
+.card.real { border-left: 3px solid var(--ok); }
+.card.stale { opacity: 0.55; }
+.panel h2 small a { color: var(--accent); }
+.netstat b { color: var(--text); font-weight: 500; font-family: var(--mono); }
 .card .row { display: flex; justify-content: space-between; color: var(--muted); }
 .card .row b { color: var(--text); font-weight: 500; font-family: var(--mono); }
 .card.linked { border-color: var(--ok); }

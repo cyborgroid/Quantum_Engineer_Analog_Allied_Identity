@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
@@ -114,7 +115,25 @@ def cmd_identity(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     from .web.server import serve
 
-    serve(host=args.host, port=args.port, seed=args.seed)
+    from .iot.environment import Location
+    from .iot.realworld import RealWorld, RealWorldConfig
+
+    realworld = None
+    if not args.offline:
+        cfg = RealWorldConfig(
+            location=Location(args.place, args.lat, args.lon),
+            weather=not args.no_weather,
+            sensors=not args.no_sensors,
+            mqtt=not args.no_mqtt,
+            mqtt_host=args.mqtt_bind,
+            mqtt_port=args.mqtt_port,
+            mqtt_user=os.environ.get("QEAAI_MQTT_USER"),
+            mqtt_password=os.environ.get("QEAAI_MQTT_PASSWORD"),
+        )
+        if cfg.mqtt_host not in ("127.0.0.1", "localhost", "::1") and cfg.mqtt_user is None:
+            print("경고: MQTT 를 네트워크에 열었지만 인증이 없습니다. QEAAI_MQTT_USER / QEAAI_MQTT_PASSWORD 를 설정하세요.")
+        realworld = RealWorld(cfg)
+    serve(host=args.host, port=args.port, seed=args.seed, realworld=realworld)
     return 0
 
 
@@ -143,6 +162,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--seed", type=int, default=0)
+    g = p.add_argument_group("실제 세계 연결 (디지털 트윈)")
+    g.add_argument("--place", default=os.environ.get("QEAAI_PLACE", "서울 시청"), help="위치 이름")
+    g.add_argument("--lat", type=float, default=float(os.environ.get("QEAAI_LAT", 37.5665)), help="위도")
+    g.add_argument("--lon", type=float, default=float(os.environ.get("QEAAI_LON", 126.9780)), help="경도")
+    g.add_argument("--no-weather", action="store_true", help="Open-Meteo 날씨 끄기 (좌표를 외부로 보내지 않음)")
+    g.add_argument("--no-sensors", action="store_true", help="이 컴퓨터의 실측 센서 끄기")
+    g.add_argument("--no-mqtt", action="store_true", help="MQTT 브로커 끄기")
+    g.add_argument("--mqtt-bind", default=os.environ.get("QEAAI_MQTT_BIND", "127.0.0.1"),
+                   help="MQTT 수신 주소 (같은 네트워크의 실제 장치를 받으려면 0.0.0.0)")
+    g.add_argument("--mqtt-port", type=int, default=int(os.environ.get("QEAAI_MQTT_PORT", 1883)))
+    g.add_argument("--offline", action="store_true", help="실제 세계 연결 전부 끄기 (순수 시뮬레이션)")
     p.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
