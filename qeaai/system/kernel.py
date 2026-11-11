@@ -74,6 +74,7 @@ class QEAAIKernel:
         self.twin = DigitalTwin(bus)
         self.game = FlightGame()
         self.t = 0.0
+        self.last_window: Window = []
         self.twin.register("band", "cyborg_band")
         self.twin.register("flyer", "game")
         self.identity.on_worn()
@@ -103,6 +104,7 @@ class QEAAIKernel:
             self.source.set_gesture(truth)
 
         window = self.source.read(self.dt)
+        self.last_window = window
         activation = activation_level(window)
         harvest_w = self.harvester.power(activation)
 

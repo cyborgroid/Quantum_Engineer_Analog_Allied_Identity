@@ -1,3 +1,6 @@
 __pycache__/
 *.egg-info/
 .pytest_cache/
+
+# 에디터 로컬 설정 / C++ IntelliSense 캐시 (browse.vc.db 는 1GB 이상)
+.vscode/

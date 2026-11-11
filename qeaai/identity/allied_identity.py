@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -35,6 +35,7 @@ class Decision:
     authenticated: bool  # 이번 창이 페어링된 사용자 패턴 안에 있는가
     trust: float  # 누적 신뢰도 0..1
     trusted: bool  # 제어권을 넘겨줄 수 있는가
+    scores: dict[str, float] = field(default_factory=dict)  # 동작별 확률
 
 
 def collect_calibration(sim: EMGSimulator, windows_per_gesture: int = 20, duration_s: float = 0.2) -> dict[str, list[Vector]]:
@@ -115,7 +116,9 @@ class AlliedIdentity:
         logits = {g: -0.5 * d * d for g, d in dists.items()}
         top = max(logits.values())
         exp = {g: math.exp(l - top) for g, l in logits.items()}
-        confidence = exp[intent] / sum(exp.values())
+        z_sum = sum(exp.values())
+        scores = {g: e / z_sum for g, e in exp.items()}
+        confidence = scores[intent]
 
         authenticated = best <= self.auth_threshold
         # 휴식 상태는 누구나 비슷하므로 신원 판단 근거로 쓰지 않는다
@@ -127,7 +130,7 @@ class AlliedIdentity:
             c = self._centroids[intent]
             self._centroids[intent] = [ci + self.adapt_rate * (zi - ci) for ci, zi in zip(c, z)]
 
-        return Decision(intent, confidence, best, authenticated, self.trust, trusted)
+        return Decision(intent, confidence, best, authenticated, self.trust, trusted, scores)
 
     def evaluate(self, labelled: Iterable[tuple[str, Vector]]) -> float:
         """정확도 (적응 없이)."""

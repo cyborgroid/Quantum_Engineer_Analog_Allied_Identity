@@ -59,12 +59,15 @@ class FlightGame:
         s.bank_deg = min(max(s.bank_deg, -MAX_BANK), MAX_BANK)
 
         # 종단속도: 스로틀 1 에서 20 m/s
-        s.speed_mps = max(0.0, s.speed_mps + (8.0 * s.throttle - 0.02 * s.speed_mps**2) * dt)
+        accel = 8.0 * s.throttle - 0.02 * s.speed_mps**2
+        if not s.airborne:
+            accel -= 1.5  # 지상 구름 마찰
+        s.speed_mps = max(0.0, s.speed_mps + accel * dt)
 
         if s.speed_mps > TAKEOFF_SPEED:
             s.altitude_m += 0.8 * (s.speed_mps - TAKEOFF_SPEED) * dt
-        elif s.altitude_m > 0:
-            s.altitude_m -= 2.0 * dt
+        elif s.altitude_m > 0:  # 실속: 느릴수록 빨리 가라앉음
+            s.altitude_m -= (1.0 + 0.8 * (TAKEOFF_SPEED - s.speed_mps)) * dt
         s.altitude_m = max(s.altitude_m, 0.0)
 
         if s.airborne and s.speed_mps > 1.0:

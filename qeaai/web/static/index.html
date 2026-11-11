@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QEAAI OS</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1l6 7-6 7-6-7z' fill='%234fd1c5'/></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true">◆</span>QEAAI<span class="sub">OS</span></div>
+    <div class="clock" id="clock">t = 0.0 s</div>
+    <div class="script" id="script">연결 중…</div>
+    <div class="spacer"></div>
+    <div class="seg" id="wearerSeg" role="group" aria-label="착용자">
+      <button data-wearer="owner" class="on">본인 착용</button>
+      <button data-wearer="impostor">타인 착용</button>
+    </div>
+    <div class="seg" id="modeSeg" role="group" aria-label="모드">
+      <button data-mode="demo" class="on">자동 데모</button>
+      <button data-mode="manual">직접 조종</button>
+    </div>
+    <button id="recharge" class="btn" title="SNSS 팩을 최대 전압으로 충전">⚡ 충전</button>
+    <button id="reset" class="btn" title="시뮬레이션 초기화 (재페어링)">↺ 리셋</button>
+    <span class="conn" id="conn" title="서버 연결 상태"></span>
+  </header>
+
+  <main class="grid">
+    <section class="panel vr">
+      <h2>VR · GAME <small>디지털 트윈 3D 뷰 · 근육으로 비행</small></h2>
+      <div class="vrwrap">
+        <canvas id="vr" aria-label="3D 비행 뷰"></canvas>
+        <canvas id="minimap" aria-label="트윈 맵"></canvas>
+      </div>
+    </section>
+
+    <section class="panel muscle">
+      <h2>MUSCLE <small>sEMG 4채널 · 근육 구동</small></h2>
+      <canvas id="emg" aria-label="근전도 오실로스코프"></canvas>
+      <div class="meter">
+        <label>활성도</label>
+        <div class="bar"><i id="actBar"></i></div>
+        <span id="actVal" class="num">0.00</span>
+      </div>
+      <div class="pad" id="pad">
+        <span></span>
+        <button data-g="fist"><kbd>W</kbd>주먹<small>스로틀 ↑</small></button>
+        <span></span>
+        <button data-g="wrist_left"><kbd>A</kbd>손목 좌<small>좌선회</small></button>
+        <button data-g="rest"><kbd>·</kbd>휴식<small>수평</small></button>
+        <button data-g="wrist_right"><kbd>D</kbd>손목 우<small>우선회</small></button>
+        <span></span>
+        <button data-g="open"><kbd>S</kbd>펴기<small>스로틀 ↓</small></button>
+        <span></span>
+      </div>
+      <p class="hint">버튼이나 키를 누르고 있는 동안 해당 근육 신호가 발생합니다. 직접 조작하면 자동 데모가 멈춥니다.</p>
+    </section>
+
+    <section class="panel identity">
+      <h2>ALLIED IDENTITY <small>사람과 페어링되어야 완성</small></h2>
+      <div class="intent">
+        <span id="intent">—</span>
+        <span class="badge" id="ctrlBadge">—</span>
+      </div>
+      <div id="scores" class="scores"></div>
+      <div class="trust">
+        <div class="trust-head"><span>신뢰도 trust</span><span id="trustVal" class="num">—</span></div>
+        <div class="gauge"><i id="trustBar"></i><b id="trustMark"></b></div>
+      </div>
+      <dl class="kv">
+        <dt>패턴 거리 / 임계</dt><dd id="dist" class="num">—</dd>
+        <dt>이번 창 인증</dt><dd id="auth">—</dd>
+        <dt>페어링된 사람</dt><dd id="owner">—</dd>
+        <dt>현재 착용자</dt><dd id="wearer">—</dd>
+      </dl>
+    </section>
+
+    <section class="panel power">
+      <h2>POWER <small>SNSS_Battery 팩</small></h2>
+      <div class="power-top">
+        <canvas id="soc" aria-label="충전 상태"></canvas>
+        <dl class="kv" id="powerKv"></dl>
+      </div>
+      <canvas id="spark" aria-label="충전 상태 기록"></canvas>
+      <div class="legend"><span class="sw sw-a"></span>SOC <span class="sw sw-b"></span>근육 활성도 <span class="sw sw-c"></span>trust</div>
+      <div class="alert" id="brownout" hidden>전원 부족: Allied Identity 정지됨. ⚡ 충전을 누르세요.</div>
+    </section>
+
+    <section class="panel qe">
+      <h2>QE <small>그래핀 양자 커패시턴스</small></h2>
+      <canvas id="qe" aria-label="양자 커패시턴스 곡선"></canvas>
+      <div class="legend"><span class="sw sw-a"></span>Cq 양자 <span class="sw sw-d"></span>Cdl 이중층 <span class="sw sw-e"></span>Ctotal 합성 <span class="sw sw-b"></span>현재 셀 상태</div>
+      <p class="readout num" id="qeReadout">—</p>
+    </section>
+
+    <section class="panel twin">
+      <h2>IoT · DIGITAL TWIN <small>버스 구독으로 미러링된 디바이스</small></h2>
+      <div class="cards" id="twinCards"></div>
+    </section>
+
+    <section class="panel net">
+      <h2>NETWORK <small>HMAC-SHA256 서명 버스</small></h2>
+      <div class="netstat num" id="netStat">—</div>
+      <ol class="log" id="netLog"></ol>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

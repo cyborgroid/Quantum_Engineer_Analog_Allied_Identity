@@ -19,5 +19,8 @@ qeaai = "qeaai.cli:main"
 [tool.setuptools.packages.find]
 include = ["qeaai*"]
 
+[tool.setuptools.package-data]
+"qeaai.web" = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

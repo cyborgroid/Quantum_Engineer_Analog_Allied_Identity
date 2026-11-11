@@ -5,6 +5,7 @@
     qeaai demo --live          # 실시간 대시보드 애니메이션
     qeaai battery              # SNSS_Battery 소재/셀/팩 특성과 양자 커패시턴스
     qeaai identity             # 페어링 정확도와 타인 거부 평가
+    qeaai serve                # 브라우저 OS 화면 (VR / Game / OS 시각화)
 """
 
 from __future__ import annotations
@@ -110,6 +111,13 @@ def cmd_identity(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .web.server import serve
+
+    serve(host=args.host, port=args.port, seed=args.seed)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qeaai", description="Quantum Engineer Analog Allied Identity")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -130,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--impostors", type=int, default=5)
     p.set_defaults(func=cmd_identity)
+
+    p = sub.add_parser("serve", help="브라우저 시각화 서버 (OS / VR / Game)")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
     return args.func(args)

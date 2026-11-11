@@ -6,7 +6,28 @@
 하드웨어(SNSS_Battery 셀, 손목밴드, 3D 펜 섀시)를 만들기 전에 소재·회로·근육 신호·AI·OS·VR·게임·네트워크가
 하나의 시스템으로 어떻게 맞물리는지 시뮬레이션하고, 나중에 실측값과 실제 센서로 한 부분씩 교체해 나가는 것이 목표입니다.
 
-## 빠른 실행
+## 화면으로 보기 (OS / VR / Game)
+
+```bash
+./run.sh                 # http://127.0.0.1:8765/ (사용 중이면 다음 포트 자동 선택)
+PORT=9000 ./run.sh       # 포트 지정
+```
+
+VS Code에서 `Ctrl+Shift+P` → **Open Integrated Browser** (없으면 **Simple Browser: Show**) → 터미널에 출력된 주소를 입력합니다.
+
+| 패널 | 내용 |
+|---|---|
+| **VR · GAME** | 3인칭 3D 비행 뷰 + HUD(방위, 속도, 고도, 스로틀) + 트윈 맵. IoT 비콘이 범위 안에 들어오면 초록색으로 연결 표시 |
+| **MUSCLE** | 4채널 근전도 오실로스코프, 근육 활성도, 동작 버튼 |
+| **ALLIED IDENTITY** | 해석된 의도, 동작별 확률, 신뢰도(trust), CONTROL / LOCKED |
+| **POWER** | SNSS 팩 충전 상태, 전압, 부하, 근육 발전량, 예상 구동 시간 |
+| **QE** | 그래핀 양자 커패시턴스 곡선과 현재 셀 상태 |
+| **IoT · DIGITAL TWIN / NETWORK** | 버스로 미러링된 디바이스 카드, 서명된 메시지 로그 |
+
+조작: **W** 주먹(스로틀↑) · **S** 펴기(스로틀↓) · **A / D** 손목 좌/우(선회). 방향키나 화면 버튼도 같습니다.
+직접 조작하면 자동 데모가 멈춥니다. 상단의 **타인 착용**을 누르면 Allied Identity가 제어를 잠그고 비행체가 fail-safe로 감속합니다.
+
+## 터미널 실행
 
 ```bash
 python3 -m qeaai demo              # 페어링된 본인이 착용 → 근육 신호로 비행체 이륙·선회
@@ -15,7 +36,7 @@ python3 -m qeaai demo --live       # 실시간 OS 대시보드
 python3 -m qeaai battery           # SNSS_Battery 셀/팩 특성 + 그래핀 양자 커패시턴스 표
 python3 -m qeaai identity          # 본인 인식 정확도 / 타인 거부 평가
 
-pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, 테스트 27개
+pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, 테스트 31개
 ```
 
 외부 의존성 없이 Python 3.10 이상 표준 라이브러리만 사용합니다.
@@ -33,6 +54,7 @@ pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, �
 | **VR** = IoT + 디지털 트윈 | [qeaai/twin/digital_twin.py](qeaai/twin/digital_twin.py) | `device/*/state` 토픽을 구독해서 모든 디바이스 상태를 실시간 미러링, VR 뷰 렌더링 |
 | **Game** ("조종하면 이미 날 수 있다") | [qeaai/game/flight.py](qeaai/game/flight.py) | 주먹=스로틀↑, 펴기=스로틀↓, 손목 좌/우=뱅크. 제어권이 없으면 fail-safe |
 | **OS** ("보고 경험하는 것 모두") | [qeaai/system/kernel.py](qeaai/system/kernel.py) | 위 전부를 200 ms 틱 루프로 묶고 화면(대시보드)으로 보여주는 커널 |
+| **OS 화면 / VR 렌더링** | [qeaai/web/](qeaai/web/) | 커널 상태를 SSE로 스트리밍하는 서버(표준 라이브러리) + Canvas 3D 화면(외부 라이브러리 없음, 오프라인 동작) |
 
 ### 한 틱의 데이터 흐름
 
