@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qeaai"
+version = "0.1.0"
+description = "Quantum Engineer Analog Allied Identity - SNSS_Battery 기반 사이보그 Allied Identity 디지털 트윈"
+authors = [{ name = "정구영" }]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+qeaai = "qeaai.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qeaai*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
