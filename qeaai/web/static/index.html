@@ -57,6 +57,7 @@
             <button data-cam="orbit" title="마우스 드래그로 회전, 휠로 확대">자유 궤도</button>
           </div>
           <button id="twinToggle" class="btn on" title="그리드, 비콘 범위, 데이터 링크, 비행 궤적">트윈 레이어</button>
+          <button id="immersive" class="btn" title="OS 가 VR 이 된다: 조종석 계기판의 OS 패널 + 전체 화면">몰입 OS</button>
         </div>
         <div class="engine-badge" id="engineBadge" hidden></div>
       </div>
@@ -101,6 +102,12 @@
         <dt>페어링된 사람</dt><dd id="owner">—</dd>
         <dt>현재 착용자</dt><dd id="wearer">—</dd>
       </dl>
+      <div class="agent">
+        <div class="agent-head">AI 페르소나 · 자율 제어 <span id="agentMode"></span></div>
+        <dl class="kv" id="personaKv"></dl>
+        <ol class="agent-log" id="agentLog"></ol>
+        <p class="hint">말로 명령하지 않습니다. 주먹 1초 유지 = 장치 켜기, 손 펴기 1초 유지 = 끄기. Claude 는 MCP(.mcp.json)로 같은 에이전트를 제어합니다.</p>
+      </div>
     </section>
 
     <section class="panel power">
@@ -119,6 +126,17 @@
       <div class="chartbox chart-qe"><canvas id="qe" aria-label="양자 커패시턴스 곡선"></canvas></div>
       <div class="legend"><span class="sw sw-a"></span>Cq 양자 <span class="sw sw-d"></span>Cdl 이중층 <span class="sw sw-e"></span>Ctotal 합성 <span class="sw sw-b"></span>현재 셀 상태</div>
       <p class="readout num" id="qeReadout">—</p>
+    </section>
+
+    <section class="panel design">
+      <h2>DESIGN · CHASSIS <small>3D 펜 손목밴드 · SNSS 소재 = 제품</small></h2>
+      <div class="design-row">
+        <label>손목 둘레 <input id="wristInput" type="number" min="110" max="260" step="1" value="165"> mm</label>
+        <a id="bandLink" class="btn" href="/api/design/band.svg" target="_blank" rel="noopener">템플릿 SVG</a>
+        <a id="tattooLink" class="btn" href="/api/design/tattoo.svg" target="_blank" rel="noopener">전자 타투 SVG</a>
+      </div>
+      <div class="design-view"><img id="bandImg" alt="3D 펜 손목밴드 템플릿" src="/api/design/band.svg"></div>
+      <dl class="kv design-kv" id="designKv"></dl>
     </section>
 
     <section class="panel twin">

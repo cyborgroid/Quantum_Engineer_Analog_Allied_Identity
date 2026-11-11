@@ -112,6 +112,45 @@ def cmd_identity(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_design(args: argparse.Namespace) -> int:
+    import json
+    from pathlib import Path
+
+    from .design.band import BandDesign
+    from .materials.snss_material import material_report
+
+    band = BandDesign(wrist_mm=args.wrist, width_mm=args.width, cells=args.cells)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "band_template.svg").write_text(band.svg_template(), encoding="utf-8")
+    (out / "etattoo_electrodes.svg").write_text(band.svg_tattoo(), encoding="utf-8")
+    report = {"design": band.metrics(), "material": material_report(), "electrodes": band.electrodes}
+    (out / "band.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    m = report["design"]
+    print(f"SNSS 손목밴드 설계 (손목 {args.wrist:.0f} mm) -> {out}/")
+    print(f"  밴드 {m['length_mm']} x {m['width_mm']} mm, 셀 {m['cells']}개 x {m['cell_footprint_cm2']} cm2")
+    print(f"  3D 펜 획 {m['pen_strokes']}개, {m['pen_length_mm']:.0f} mm, 약 {m['pen_time_min']} 분, PCL {m['pcl_mass_g']} g")
+    print(f"  SNSS 직렬 배선 {m['trace_length_mm']} mm, {m['trace_resistance_ohm']} ohm")
+    print(f"  전자 타투 전극 {m['electrode_impedance_kohm']} kohm, 잡음 {m['electrode_noise_uv']} uV rms")
+    print("  인쇄: band_template.svg 를 배율 100% 로 (10 mm 눈금으로 확인)")
+    return 0
+
+
+def cmd_vpn(args: argparse.Namespace) -> int:
+    from .iot.vpn import generate
+
+    r = generate(args.out, args.peer, endpoint=args.endpoint, port=args.port)
+    print(f"WireGuard 설정 생성 -> {args.out}/  (개인 키 포함: 공유 금지, git 제외됨)")
+    print(f"  게이트웨이(이 컴퓨터) {r['gateway_ip']}  엔드포인트 {r['endpoint']}")
+    for peer in r["peers"]:
+        print(f"  장치 {peer['name']:<12} {peer['ip']:<12} {peer['config']}  -> MQTT {peer['mqtt']}")
+    print("다음 단계 (관리자 권한):")
+    print(f"  sudo cp {r['server_config']} /etc/wireguard/ && sudo wg-quick up {r['interface']}")
+    print(f"  ./run.sh --mqtt-bind {r['gateway_ip']}     # MQTT 를 VPN 안에서만 열기")
+    print("  장치: peer-*.conf 를 WireGuard 앱(스마트폰 QR: qrencode -t ansiutf8 < 파일) 또는 WireGuard-ESP32 에 입력")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from .web.server import serve
 
@@ -157,6 +196,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--impostors", type=int, default=5)
     p.set_defaults(func=cmd_identity)
+
+    p = sub.add_parser("design", help="3D 펜 손목밴드 템플릿 + 전자 타투 전극 시트 (SVG, 1:1)")
+    p.add_argument("--wrist", type=float, default=165.0, help="손목 둘레 mm")
+    p.add_argument("--width", type=float, default=32.0, help="밴드 폭 mm")
+    p.add_argument("--cells", type=int, default=5)
+    p.add_argument("--out", default="design_out")
+    p.set_defaults(func=cmd_design)
+
+    p = sub.add_parser("vpn", help="WireGuard VPN 설정 생성 (게이트웨이 + 장치들)")
+    p.add_argument("--peer", action="append", required=True, help="장치 이름 (여러 번)")
+    p.add_argument("--endpoint", help="장치가 접속할 이 컴퓨터의 주소 (기본: LAN IP)")
+    p.add_argument("--port", type=int, default=51820)
+    p.add_argument("--out", default="vpn")
+    p.set_defaults(func=cmd_vpn)
 
     p = sub.add_parser("serve", help="브라우저 시각화 서버 (OS / VR / Game)")
     p.add_argument("--host", default="127.0.0.1")

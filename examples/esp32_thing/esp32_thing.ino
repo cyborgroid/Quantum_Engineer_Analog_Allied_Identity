@@ -5,7 +5,8 @@
 //           인증을 쓰면 QEAAI_MQTT_USER / QEAAI_MQTT_PASSWORD 환경변수 + 아래 MQTT_USER / MQTT_PASS
 //
 // 동작: 1 초마다 실제 센서값(아날로그 핀, 칩 내부 온도, Wi-Fi 신호)을 qeaai/things/<id>/state 로 보내고,
-//       qeaai/neural/intent 를 구독해 근육 의도 "fist" 면 LED 켜기, "open" 이면 끄기.
+//       qeaai/things/<id>/set 을 구독해 Allied Identity 에이전트의 명령 {"on":true|false} 을 실행.
+//       (사용자가 주먹을 1초 유지하면 에이전트가 켜고, 손을 펴서 1초 유지하면 끈다. 타인이 착용하면 에이전트가 끈다)
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -24,20 +25,18 @@ const int   LED_PIN    = 2;
 WiFiClient net;
 PubSubClient mqtt(net);
 String stateTopic = String("qeaai/things/") + THING_ID + "/state";
+String setTopic   = String("qeaai/things/") + THING_ID + "/set";
 
 void onMessage(char* topic, byte* payload, unsigned int len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len)) return;
-  if (!doc["trusted"].as<bool>()) return;          // Allied Identity 가 인증한 사용자만
-  const char* intent = doc["intent"] | "rest";
-  if (!strcmp(intent, "fist")) digitalWrite(LED_PIN, HIGH);
-  if (!strcmp(intent, "open")) digitalWrite(LED_PIN, LOW);
+  if (doc["on"].is<bool>()) digitalWrite(LED_PIN, doc["on"].as<bool>() ? HIGH : LOW);
 }
 
 void connectMqtt() {
   while (!mqtt.connected()) {
     if (mqtt.connect(THING_ID, MQTT_USER, MQTT_PASS)) {
-      mqtt.subscribe("qeaai/neural/intent");
+      mqtt.subscribe(setTopic.c_str());
     } else {
       delay(2000);
     }
@@ -62,11 +61,11 @@ void loop() {
   lastSent = millis();
 
   JsonDocument doc;
-  doc["kind"]        = "esp32_sensor";
+  doc["kind"]        = "esp32_actuator";
   doc["analog_raw"]  = analogRead(SENSOR_PIN);
   doc["chip_temp_c"] = temperatureRead();
   doc["rssi_dbm"]    = WiFi.RSSI();
-  doc["led_on"]      = digitalRead(LED_PIN) == HIGH;
+  doc["on"]          = digitalRead(LED_PIN) == HIGH;   // 에이전트가 제어하는 액추에이터 상태
   doc["uptime_s"]    = millis() / 1000;
   // doc["x"] = -90; doc["y"] = 30;   // VR 안 위치를 직접 지정하려면 (m)
   char buf[512];

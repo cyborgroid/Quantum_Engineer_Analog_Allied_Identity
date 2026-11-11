@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from ..bio.emg import EMGSimulator, UserPhysiology, Window, activation_level, extract_features
@@ -22,7 +22,9 @@ from ..bio.harvester import MuscleHarvester
 from ..circuit.power import Load, PowerBus, PowerReport
 from ..game.flight import FlightGame, FlightState
 from ..identity.allied_identity import AlliedIdentity, Decision, collect_calibration
-from ..materials.snss_battery import SNSSPack
+from ..design.band import BandDesign
+from ..materials.snss_battery import CellGeometry, SNSSCell, SNSSPack
+from ..materials.snss_material import default_emg_noise_floor_mv
 from ..network.bus import NetworkBus, SecureChannel
 from ..twin.digital_twin import DigitalTwin
 
@@ -83,14 +85,18 @@ class QEAAIKernel:
     @classmethod
     def build_default(cls, seed: int = 0, wearer_seed: int | None = None) -> "QEAAIKernel":
         """seed 의 사용자와 페어링. wearer_seed 가 다르면 다른 사람이 착용한 상황."""
-        owner = UserPhysiology.random("owner", seed)
+        # 소재 = 제품: 밴드 설계가 셀 면적·배선 저항을, 전자 타투 전극이 근전도 잡음을 정한다
+        band = BandDesign()
+        noise = default_emg_noise_floor_mv()
+        owner = replace(UserPhysiology.random("owner", seed), noise_floor_mv=noise)
         identity = AlliedIdentity()
         identity.pair(owner.user_id, collect_calibration(EMGSimulator(owner, seed=seed + 1)))
 
-        wearer = owner if wearer_seed is None else UserPhysiology.random("wearer", wearer_seed)
+        wearer = owner if wearer_seed is None else replace(UserPhysiology.random("wearer", wearer_seed), noise_floor_mv=noise)
         source = EMGSimulator(wearer, seed=seed + 2)
 
-        power = PowerBus(SNSSPack.charged())
+        cell = SNSSCell(geometry=CellGeometry(footprint_cm2=band.cell_footprint_cm2))
+        power = PowerBus(SNSSPack.charged(cell=cell, cells_in_series=band.cells, interconnect_ohm=band.trace_resistance_ohm()))
         power.add_load(Load("core_mcu", 150e-6))
         power.add_load(Load("display", 800e-6))
         power.add_load(Load("radio", 1.5e-3, duty=0.2))

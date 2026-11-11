@@ -18,6 +18,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { VRButton } from "three/addons/webxr/VRButton.js";
 
 const canvas = document.getElementById("vr3d");
 const DEG = Math.PI / 180;
@@ -32,6 +33,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.5;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.xr.enabled = true; // WebXR: "OS 가 VR 이 된다" - 실제 VR 헤드셋으로 진입
+renderer.xr.setReferenceSpaceType("local");
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(58, 1, 0.3, 14000);
@@ -557,6 +560,129 @@ function setCamMode(mode) {
 }
 
 /* ---------- 프레임 ---------- */
+/* ---------- OS = VR: 조종석 계기판으로 들어온 OS 패널 ---------- */
+const LABEL_KO = { rest: "휴식", fist: "주먹", open: "펴기", wrist_left: "손목 좌", wrist_right: "손목 우" };
+const EYE = new THREE.Vector3(0, 0.95, 1.6); // 조종사 눈 (기체 좌표, 기수 +Z, 좌측 +X)
+const osPanels = new THREE.Group();
+osPanels.visible = false;
+flyer.add(osPanels);
+const panels = {};
+function makePanel(key, w, h, pos) {
+  const c = document.createElement("canvas");
+  c.width = 640; c.height = Math.round(640 * h / w);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false, transparent: true }));
+  mesh.position.copy(pos);
+  mesh.lookAt(EYE); // flyer 가 원점·무회전인 초기화 시점이라 로컬 = 월드
+  mesh.renderOrder = 20;
+  osPanels.add(mesh);
+  panels[key] = { c, g: c.getContext("2d"), tex };
+}
+makePanel("flight", 0.8, 0.25, new THREE.Vector3(0, 1.3, 3.9));
+makePanel("ai", 0.56, 0.42, new THREE.Vector3(0.66, 0.62, 3.75));
+makePanel("power", 0.56, 0.42, new THREE.Vector3(0, 0.56, 3.9));
+makePanel("world", 0.56, 0.42, new THREE.Vector3(-0.66, 0.62, 3.75));
+
+function panelFrame(p, title, accent) {
+  const { g, c } = p;
+  g.clearRect(0, 0, c.width, c.height);
+  g.fillStyle = "rgba(8,12,17,0.86)"; g.beginPath(); g.roundRect(4, 4, c.width - 8, c.height - 8, 18); g.fill();
+  g.strokeStyle = accent; g.lineWidth = 3; g.stroke();
+  g.fillStyle = accent; g.font = "600 26px 'JetBrains Mono', monospace"; g.textBaseline = "top"; g.fillText(title, 24, 18);
+  return g;
+}
+function line(g, text, y, size = 28, color = "#d8e2ec", weight = "400") {
+  g.font = `${weight} ${size}px 'Pretendard Variable', sans-serif`; g.fillStyle = color; g.fillText(text, 24, y);
+}
+function bar(g, x, y, w, h, v, color, mark) {
+  g.fillStyle = "#1f2c39"; g.fillRect(x, y, w, h);
+  g.fillStyle = color; g.fillRect(x, y, w * Math.max(0, Math.min(1, v)), h);
+  if (mark !== undefined) { g.fillStyle = "#fff"; g.fillRect(x + w * mark - 1, y - 4, 3, h + 8); }
+}
+let panelTimer = 1;
+function updatePanels(S, dt) {
+  panelTimer += dt;
+  if (panelTimer < 0.25) return;
+  panelTimer = 0;
+  const d = S.decision, p = S.power, fl = S.flight, e = S.env, w = e && e.weather;
+  // 비행
+  let g = panelFrame(panels.flight, "FLIGHT", "#4fd1c5");
+  line(g, `SPD ${fl.speed_mps.toFixed(1)} m/s   ALT ${fl.altitude_m.toFixed(1)} m   HDG ${fl.heading_deg.toFixed(0)}°`, 62, 30, "#d8e2ec", "600");
+  line(g, `THR ${(fl.throttle * 100).toFixed(0)}%${w ? `   WIND ${w.wind_speed_10m.toFixed(1)} m/s (실측)` : ""}`, 110, 26, "#4fd1c5", "600");
+  panels.flight.tex.needsUpdate = true;
+  // Allied Identity
+  const ok = d && d.trusted;
+  g = panelFrame(panels.ai, "ALLIED IDENTITY", ok ? "#68d391" : "#fc5c65");
+  line(g, d ? (LABEL_KO[d.intent] || d.intent) : "전원 부족", 70, 64, "#ffffff", "700");
+  line(g, d ? (ok ? "CONTROL · 본인" : "LOCKED · 페어링 안 된 사람") : "BROWNOUT", 160, 28, ok ? "#68d391" : "#fc5c65", "600");
+  line(g, `trust ${d ? d.trust.toFixed(2) : "—"}`, 210, 24, "#7b8a99");
+  bar(g, 24, 250, 592, 18, d ? d.trust : 0, ok ? "#68d391" : "#fc5c65", d ? d.trust_threshold : undefined);
+  const last = S.agent && S.agent.log && S.agent.log[0];
+  if (last) line(g, `AI: ${last.text}`.slice(0, 34), 300, 24, "#f6ad55");
+  panels.ai.tex.needsUpdate = true;
+  // 전원 / QE
+  g = panelFrame(panels.power, "POWER · SNSS", "#4fd1c5");
+  line(g, `${(p.soc * 100).toFixed(1)}%`, 66, 64, "#ffffff", "700");
+  bar(g, 24, 150, 592, 18, p.soc, p.soc > 0.5 ? "#68d391" : p.soc > 0.2 ? "#f6ad55" : "#fc5c65");
+  line(g, `팩 ${p.pack_v.toFixed(2)} V · 부하 ${p.load_mw.toFixed(2)} mW`, 190, 26);
+  line(g, `전해질 ${S.electrolyte_c.toFixed(1)}°C · 발전 ${p.harvest_uw.toFixed(1)} µW`, 232, 26);
+  line(g, `예상 구동 ${Math.floor(p.runtime_s / 60)}분`, 274, 26, "#7b8a99");
+  panels.power.tex.needsUpdate = true;
+  // 실제 세계 / 트윈
+  g = panelFrame(panels.world, "REAL WORLD · TWIN", "#68d391");
+  if (e) {
+    line(g, `${e.location.name} ${e.local_time.slice(11)} · 태양 ${e.sun.elevation_deg.toFixed(0)}°`, 64, 26);
+    if (w) line(g, `${w.description} ${w.temperature_2m.toFixed(1)}°C · 바람 ${w.wind_speed_10m.toFixed(1)} m/s`, 104, 26);
+  } else line(g, "실제 세계 연결 꺼짐", 64, 26, "#7b8a99");
+  const gw = S.twin.find((t) => t.kind === "edge_gateway");
+  if (gw) line(g, `THIS PC CPU ${gw.cpu_temp_c ?? "—"}°C · 배터리 ${gw.battery_pct ?? "—"}%`, 144, 26);
+  const real = S.twin.filter((t) => t.real).length;
+  line(g, `실측 ${real} · 가상 ${S.twin.length - real} · MQTT ${S.mqtt && S.mqtt.clients ? S.mqtt.clients.length : 0}`, 184, 26, "#68d391");
+  panels.world.tex.needsUpdate = true;
+}
+
+// XR 리그: 헤드셋 카메라를 조종석에 앉힌다
+const rig = new THREE.Group();
+scene.add(rig);
+let xrActive = false, xrGesture = null;
+renderer.xr.addEventListener("sessionstart", () => {
+  xrActive = true;
+  rig.add(camera);
+  camera.position.set(0, 0, 0);
+  camera.quaternion.identity();
+  renderer.setAnimationLoop(xrFrame);
+});
+renderer.xr.addEventListener("sessionend", () => {
+  xrActive = false;
+  rig.remove(camera);
+  renderer.setAnimationLoop(null);
+  setCamMode(camMode);
+});
+function pollXRInput() { // VR 컨트롤러 = 근육 입력 대용 (게임기처럼 조종)
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  let g = "rest";
+  for (const src of session.inputSources) {
+    const gp = src.gamepad;
+    if (!gp) continue;
+    const ax = gp.axes.length > 2 ? gp.axes[2] : gp.axes[0] || 0;
+    if (gp.buttons[0] && gp.buttons[0].pressed) g = "fist";
+    else if (gp.buttons[1] && gp.buttons[1].pressed) g = "open";
+    else if (ax < -0.6) g = "wrist_left";
+    else if (ax > 0.6) g = "wrist_right";
+    if (g !== "rest") break;
+  }
+  if (g !== xrGesture) { xrGesture = g; window.QEAAI.post({ gesture: g }); }
+}
+function xrFrame() {
+  const f = window.QEAAI.getFlight(), S = window.QEAAI.getState();
+  if (!f || !S) return;
+  pollXRInput();
+  render(f, S, true);
+}
+
 const clock = new THREE.Clock();
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), UP7 = new THREE.Vector3(0, 7, 0);
 let lastT = null, trailTimer = 0, modelSource = "절차적 PBR 모델";
@@ -573,8 +699,9 @@ function resize() {
   }
 }
 
-function render(f, S) {
-  resize();
+function render(f, S, fromXR = false) {
+  if (xrActive && !fromXR) return; // XR 중에는 헤드셋 루프가 그린다
+  if (!xrActive) resize();
   const dt = Math.min(clock.getDelta(), 0.1);
   const time = clock.elapsedTime;
 
@@ -634,9 +761,15 @@ function render(f, S) {
   sun.position.copy(flyer.position).addScaledVector(sunDir.y > 0.02 ? sunDir : tmp.set(0, 1, 0), 300);
   sun.target.position.copy(flyer.position);
 
+  // OS 패널
+  updatePanels(S, dt);
+
   // 카메라
   const h = f.heading_deg * DEG;
-  if (camMode === "chase") {
+  if (xrActive) {
+    rig.position.copy(flyer.localToWorld(tmp.copy(EYE)));
+    rig.quaternion.copy(flyer.quaternion).multiply(Q_BACK);
+  } else if (camMode === "chase") {
     tmp.set(Math.sin(h), 0, -Math.cos(h));
     tmp2.copy(flyer.position).addScaledVector(tmp, -26).add(UP7);
     tmp2.y = Math.max(tmp2.y, 2.5);
@@ -656,12 +789,14 @@ function render(f, S) {
   lastFlyerPos.copy(flyer.position);
   applyVisibility();
 
-  composer.render();
+  if (xrActive) renderer.render(scene, camera); // XR: 후처리 없이 양안 렌더
+  else composer.render();
 }
 
 function applyVisibility() {
   // 조종석 시점에서는 기체 외피를 숨겨 시야를 확보한다
-  const inside = camMode === "cockpit";
+  const inside = camMode === "cockpit" || xrActive;
+  osPanels.visible = inside;
   procedural.visible = !inside && !gltfRoot;
   if (gltfRoot) gltfRoot.visible = !inside;
 }
@@ -690,9 +825,18 @@ function updateBadge() {
 document.querySelectorAll("#vrTools [data-cam]").forEach((b) => b.addEventListener("click", () => setCamMode(b.dataset.cam)));
 const twinBtn = document.getElementById("twinToggle");
 twinBtn.addEventListener("click", () => { twinLayer.visible = !twinLayer.visible; twinBtn.classList.toggle("on", twinLayer.visible); });
+document.getElementById("immersive").addEventListener("click", () => { // 몰입 OS: 조종석 + 전체 화면
+  setCamMode("cockpit");
+  const wrap = canvas.parentElement;
+  if (!document.fullscreenElement && wrap.requestFullscreen) wrap.requestFullscreen().catch(() => {});
+});
+const vrWrap = document.createElement("div"); // VRButton 은 지원 여부 확인 후 스타일을 다시 쓰므로 CSS 로 고정
+vrWrap.className = "vrbtn-wrap";
+vrWrap.appendChild(VRButton.createButton(renderer));
+canvas.parentElement.appendChild(vrWrap);
 document.getElementById("vrTools").hidden = false;
 canvas.hidden = false;
 setCamMode("chase");
 updateBadge();
 
-window.QEAAI_VR = { ready: true, render, renderer, scene, camera, setCamMode };
+window.QEAAI_VR = { ready: true, render, renderer, scene, camera, setCamMode, get xr() { return xrActive; } };

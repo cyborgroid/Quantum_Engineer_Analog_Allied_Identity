@@ -6,8 +6,9 @@ QEAAI OS(./run.sh)를 켠 상태에서:
     python3 examples/mqtt_device.py --id room --kind env_sensor --prop temp_c=23.5 --prop humidity_pct=40
     python3 examples/mqtt_device.py --id rover --kind robot --x -90 --y 30      # VR 안 위치 지정
 
-장치는 1 초마다 상태를 qeaai/things/<id>/state 로 보내고, 동시에 qeaai/neural/intent 를 구독해서
-Allied Identity 가 해석한 근육 의도(주먹/펴기/손목 좌우)를 받는다 -> 실제 액추에이터를 근육으로 제어.
+장치는 1 초마다 상태를 qeaai/things/<id>/state 로 보내고, qeaai/things/<id>/set 을 구독해서
+Allied Identity 에이전트(또는 MCP 로 Claude)가 보내는 명령을 실행한다.
+사용자는 말하지 않는다: 주먹을 1 초 유지하면 켜고, 손을 펴서 1 초 유지하면 에이전트가 끈다.
 
 같은 일을 mosquitto 로 하면:
     mosquitto_pub -h 127.0.0.1 -t qeaai/things/room/state -m '{"kind":"env_sensor","temp_c":23.5}'
@@ -51,16 +52,16 @@ def main() -> int:
     state = {"on": False, "last_intent": "rest"}
 
     def on_message(topic: str, payload: bytes) -> None:
-        intent = json.loads(payload).get("intent")
-        trusted = json.loads(payload).get("trusted")
-        if not trusted or intent == state["last_intent"]:
+        try:
+            cmd = json.loads(payload)
+        except json.JSONDecodeError:
             return
-        state["last_intent"] = intent
-        if intent == "fist":
-            state["on"] = True
-        elif intent == "open":
-            state["on"] = False
-        print(f"[{args.id}] 근육 의도 수신: {intent} -> on={state['on']}")
+        if topic.endswith("/set") and isinstance(cmd, dict):
+            if "on" in cmd:
+                state["on"] = bool(cmd["on"])
+            print(f"[{args.id}] 에이전트 명령 실행: {cmd} -> on={state['on']}", flush=True)
+        elif topic == "qeaai/neural/intent":
+            state["last_intent"] = cmd.get("intent", state["last_intent"])
 
     fixed = dict(parse_prop(p) for p in args.prop)
     if args.x is not None and args.y is not None:
@@ -72,6 +73,7 @@ def main() -> int:
             client.on_message = on_message
             try:
                 client.connect()
+                client.subscribe(f"qeaai/things/{args.id}/set")
                 client.subscribe("qeaai/neural/intent")
                 print(f"[{args.id}] 연결됨 {args.host}:{args.port}. Ctrl+C 로 종료", flush=True)
                 while True:

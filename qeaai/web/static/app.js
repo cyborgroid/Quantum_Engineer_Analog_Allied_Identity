@@ -120,6 +120,18 @@ function updateDom(st) {
     $("auth").innerHTML = d.authenticated ? '<span class="yes">✓ 본인 패턴</span>' : '<span class="no">✗ 패턴 불일치</span>';
   }
   $("owner").textContent = st.owner || "—";
+  if (st.agent) {
+    const a = st.agent, ps = a.persona;
+    const modes = [a.locked ? "잠금" : "정상", a.saver ? "절전" : null, a.night_dim ? "야간" : null].filter(Boolean);
+    $("agentMode").textContent = modes.join(" · ");
+    $("personaKv").innerHTML = [
+      ["관찰 시간", `${ps.observed_min}분`],
+      ["주로 쓰는 동작", ps.favorite_gesture ? LABEL[ps.favorite_gesture] : "—"],
+      ["활동 시간대", ps.peak_hour === null ? "—" : `${ps.peak_hour}시`],
+      ["비행 성향", ps.flight_style ? `${ps.flight_style} (평균 뱅크 ${ps.mean_bank_deg}°)` : "학습 중"],
+    ].map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join("");
+    $("agentLog").innerHTML = a.log.slice(0, 5).map((l) => `<li class="${l.kind}"><time>${l.time}</time>${escapeHtml(l.text)}</li>`).join("");
+  }
   $("wearer").innerHTML = st.wearer === "owner" ? '<span class="yes">본인</span>' : '<span class="no">타인</span>';
 
   const p = st.power;
@@ -689,6 +701,25 @@ function updateCharts() {
   charts.qe.update("none");
 }
 
+/* ---------- 설계 (3D 펜 밴드) ---------- */
+async function loadDesign() {
+  const wrist = clamp(Number($("wristInput").value) || 165, 110, 260);
+  const q = `?wrist=${wrist}`;
+  $("bandImg").src = `/api/design/band.svg${q}`;
+  $("bandLink").href = `/api/design/band.svg${q}`;
+  $("tattooLink").href = `/api/design/tattoo.svg${q}`;
+  try {
+    const r = await (await fetch(`/api/design/band.json${q}`)).json();
+    const d = r.design, ink = r.material.ink, tr = r.material.trace;
+    $("designKv").innerHTML = [
+      ["밴드", `${d.length_mm} × ${d.width_mm} mm`], ["SNSS 셀", `${d.cells} × ${d.cell_footprint_cm2} cm²`],
+      ["3D 펜", `${d.pen_strokes}획 · ${d.pen_time_min}분`], ["PCL", `${d.pcl_mass_g} g`],
+      ["배선 저항", `${d.trace_resistance_ohm} Ω`], ["GO 액정", `${ink.phase} · S ${ink.order_extruded}`],
+      ["배향 이방성", `${tr.anisotropy}×`], ["타투 전극", `${d.electrode_impedance_kohm} kΩ · ${d.electrode_noise_uv} µV`],
+    ].map(([k, v]) => `<dt>${k}</dt><dd class="num">${v}</dd>`).join("");
+  } catch (e) { console.warn("design", e); }
+}
+
 /* ---------- 입력 ---------- */
 const KEYMAP = {
   KeyW: "fist", ArrowUp: "fist", KeyS: "open", ArrowDown: "open",
@@ -743,6 +774,8 @@ function frame() {
 }
 
 window.addEventListener("resize", () => { dirty = true; });
+$("wristInput").addEventListener("change", loadDesign);
+loadDesign();
 window.addEventListener("qeaai:chartjs", () => { dirty = true; }); // Chart.js 가 늦게 도착하면 그때 전환
 // Three.js 엔진(vr3d.js) 이 읽는 공개 인터페이스
 window.QEAAI = { getState: () => S, getFlight: interpFlight, getInfo: () => info, post };

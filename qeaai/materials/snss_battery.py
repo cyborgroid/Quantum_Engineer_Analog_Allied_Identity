@@ -133,6 +133,7 @@ class SNSSPack:
     cell: SNSSCell = field(default_factory=SNSSCell)
     cells_in_series: int = 5
     strings_in_parallel: int = 1
+    interconnect_ohm: float = 0.0  # 셀 사이 SNSS 배선 저항 (밴드 설계에서)
 
     def __post_init__(self) -> None:
         if self.cells_in_series < 1 or self.strings_in_parallel < 1:
@@ -158,7 +159,7 @@ class SNSSPack:
 
     @property
     def esr(self) -> float:
-        return self.cell.esr * self.cells_in_series / self.strings_in_parallel
+        return self.cell.esr * self.cells_in_series / self.strings_in_parallel + self.interconnect_ohm
 
     @property
     def capacitance(self) -> float:

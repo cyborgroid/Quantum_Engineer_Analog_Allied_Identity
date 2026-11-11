@@ -26,7 +26,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ..agent.allied_agent import AlliedAgent
 from ..bio.emg import CHANNELS, GESTURES, EMGSimulator, UserPhysiology
+from ..design.band import BandDesign
+from ..materials.snss_material import material_report
 from ..iot.realworld import MAX_THINGS, RealWorld, parse_thing_message
 from ..iot.things import thing_description
 from ..materials.quantum import capacitance_breakdown
@@ -85,9 +88,10 @@ SKIN_TEMP_C = 33.0  # 손목 피부 온도: 밴드 전해질 온도 = 피부와 
 
 
 class Simulation:
-    def __init__(self, seed: int = 0, realworld: RealWorld | None = None):
+    def __init__(self, seed: int = 0, realworld: RealWorld | None = None, persona_path: str | Path | None = None):
         self.seed = seed
         self.realworld = realworld
+        self.agent = AlliedAgent(command=self._agent_command, persona_path=persona_path)
         self.cond = threading.Condition()
         self.running = False
         self._thread: threading.Thread | None = None
@@ -101,7 +105,9 @@ class Simulation:
     def _build(self) -> None:
         self.kernel = QEAAIKernel.build_default(seed=self.seed)
         self.owner_source = self.kernel.source
-        self.impostor_source = EMGSimulator(UserPhysiology.random("impostor", self.seed + 999), seed=self.seed + 3)
+        impostor = UserPhysiology.random("impostor", self.seed + 999)
+        impostor = dataclasses.replace(impostor, noise_floor_mv=self.owner_source.physiology.noise_floor_mv)
+        self.impostor_source = EMGSimulator(impostor, seed=self.seed + 3)
         self.wearer = "owner"
         self.mode = "demo"
         self.manual_gesture = "rest"
@@ -115,6 +121,7 @@ class Simulation:
         self.version = getattr(self, "version", 0)
         self.ticks = 0
         self.env_snapshot: dict | None = None
+        self.agent.saver, self.agent.locked = False, False  # 새 커널은 기본 부하로 시작 (야간 상태는 유지)
         self._wire_realworld()
 
     # --- 실제 세계 ----------------------------------------------------------
@@ -153,6 +160,22 @@ class Simulation:
                 if abs(cell.electrolyte.temperature_c - t) > 0.05:
                     cell.electrolyte = dataclasses.replace(cell.electrolyte, temperature_c=round(t, 2))
         self.env_snapshot = rw.env.snapshot()
+
+    def _agent_command(self, device: str, props: dict) -> None:
+        """에이전트 -> 실제 장치 (MQTT 표준 명령 토픽). cond 를 잡은 상태에서 호출된다."""
+        rw = self.realworld
+        if rw and rw.broker:
+            rw.broker.publish(f"qeaai/things/{device}/set", props)
+        self.kernel.bus.publish("agent/command", {"device": device, "set": props}, sender="allied_agent")
+
+    def agent_command(self, device: str, props: dict, reason: str) -> dict:
+        from ..iot.realworld import THING_ID
+        if not isinstance(device, str) or not THING_ID.match(device) or not isinstance(props, dict) or not props:
+            raise ValueError("device 는 장치 id, set 은 비어 있지 않은 객체")
+        with self.cond:
+            self.agent.send(device, props, str(reason)[:60], "external")
+        rw = self.realworld
+        return {"ok": True, "topic": f"qeaai/things/{device}/set", "delivered_via_mqtt": bool(rw and rw.broker)}
 
     def ingest_mqtt(self, topic: str, payload: bytes, client_id: str) -> None:
         """MQTT 브로커 스레드에서 호출: 실제 장치 데이터 -> 트윈."""
@@ -379,6 +402,8 @@ class Simulation:
             },
             "history": list(self.history),
         }
+        self.agent.step(state, k, dt)  # Allied Identity 에이전트가 직접 판단하고 제어
+        state["agent"] = self.agent.export()
         self.payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
         self.version += 1
         return state
@@ -438,6 +463,11 @@ def make_handler(sim: Simulation) -> type[BaseHTTPRequestHandler]:
                 return self._stream()
             if path == "/api/info":
                 return self._json(sim.info())
+            if path == "/api/agent":
+                with sim.cond:
+                    return self._json(sim.agent.export())
+            if path.startswith("/api/design/"):
+                return self._design(path)
             if path == "/api/things" or path.startswith("/api/things/"):
                 return self._things(path)
             if path == "/api/state":
@@ -448,6 +478,23 @@ def make_handler(sim: Simulation) -> type[BaseHTTPRequestHandler]:
             if STATIC_DIR.resolve() not in file.parents or not file.is_file():
                 return self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain")
             self._send(HTTPStatus.OK, file.read_bytes(), CONTENT_TYPES.get(file.suffix, "application/octet-stream"))
+
+        def _design(self, path: str) -> None:
+            from urllib.parse import parse_qs, urlparse
+            q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+            try:
+                band = BandDesign(wrist_mm=float(q.get("wrist", 165)), width_mm=float(q.get("width", 32)),
+                                  cells=int(q.get("cells", 5)))
+            except ValueError as e:
+                return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+            name = path.rsplit("/", 1)[-1]
+            if name == "band.svg":
+                return self._send(HTTPStatus.OK, band.svg_template().encode(), "image/svg+xml; charset=utf-8")
+            if name == "tattoo.svg":
+                return self._send(HTTPStatus.OK, band.svg_tattoo().encode(), "image/svg+xml; charset=utf-8")
+            if name == "band.json":
+                return self._json({"design": band.metrics(), "material": material_report(), "electrodes": band.electrodes})
+            return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def _things(self, path: str) -> None:
             host = self.headers.get("Host") or f"{self.server.server_address[0]}:{self.server.server_address[1]}"
@@ -472,13 +519,15 @@ def make_handler(sim: Simulation) -> type[BaseHTTPRequestHandler]:
             return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
-            if self.path != "/api/control":
+            if self.path not in ("/api/control", "/api/agent/command"):
                 return self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain")
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 cmd = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(cmd, dict):
                     raise ValueError("body must be a JSON object")
+                if self.path == "/api/agent/command":
+                    return self._json(sim.agent_command(cmd.get("device"), cmd.get("set"), cmd.get("reason", "external")))
                 self._json(sim.control(cmd))
             except (ValueError, json.JSONDecodeError) as e:
                 self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
@@ -508,7 +557,8 @@ def serve(host: str = "127.0.0.1", port: int = 8765, seed: int = 0, port_tries: 
           realworld: RealWorld | None = None) -> None:
     if realworld:
         realworld.start()
-    sim = Simulation(seed=seed, realworld=realworld)
+    persona = Path(__file__).resolve().parents[2] / "data" / "allied_persona.json"
+    sim = Simulation(seed=seed, realworld=realworld, persona_path=persona)
     handler = make_handler(sim)
     httpd = None
     for p in range(port, port + port_tries):
@@ -542,6 +592,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, seed: int = 0, port_tries: 
         print("\n종료합니다.")
     finally:
         sim.stop()
+        sim.agent.save()
         httpd.server_close()
         if realworld:
             realworld.stop()

@@ -85,7 +85,8 @@ class RealWorld:
     def gateway_state(self) -> dict | None:
         if not self.sensors:
             return None
-        return {**self.sensors.read(), "source": "sysfs"}
+        from .vpn import status as vpn_status
+        return {**self.sensors.read(), **vpn_status(), "source": "sysfs"}
 
     def status(self) -> dict:
         b = self.broker

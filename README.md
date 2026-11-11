@@ -89,6 +89,55 @@ mosquitto_sub -t 'qeaai/twin/#' -v                                              
 - **MQTT:** 기본 설정은 이 컴퓨터에서만 접속할 수 있습니다(`127.0.0.1`). 네트워크에 열 때는 인증을 설정하세요. 암호화(TLS)가 필요하면 앞단에 TLS 프록시를 두세요.
 - **완전 오프라인:** `--offline`이면 실제 세계 연결을 모두 끄고 순수 시뮬레이션으로 동작합니다.
 
+## 명세 재검토 반영: 소재 · 설계 · OS=VR · Allied Identity · VPN
+
+### SNSS 소재 = 제품 (그래핀 폴리머 **액정**)
+"그래핀 폴리머 액정"은 **그래핀 산화물(GO) 액정**으로 해석했습니다. GO 조각은 일정 농도를 넘으면 스스로 정렬하는 액정이 됩니다(Onsager 이론, 기본 조각 기준 약 0.8 mg/mL). 3D 펜 노즐을 지날 때 생기는 전단으로 결이 더 정렬되고, 비타민C로 환원하면 결 방향으로 전기가 잘 통하는 rGO가 됩니다([snss_material.py](qeaai/materials/snss_material.py)).
+
+같은 소재 계열을 조성만 바꿔 부품마다 씁니다.
+
+| 부품 | 조성 / 공정 | 계산 결과 (기본값) |
+|---|---|---|
+| 직렬 배선 | 배선 잉크 GO 20 mg/mL · PVA 0.5%, 3D 펜 압출 후 환원 | 40 mm 배선 **8.7 Ω**, 이방성 6.7배 (같은 배선을 겔 잉크로 그리면 1.3 kΩ이라 쓸 수 없음) |
+| 피부 전자 타투 근전도 전극 | 1 µm 미만 그래핀 + PVA·식염수 겔 계면 | 27 kΩ, 잡음 **3.2 µV** (50 µm 두께 전극은 28 µV) |
+| 셀 / 변형 센서 / 섀시 내층 | 겔 잉크 GO 6 mg/mL · PVA 4% · 0.9% 식염수 | 셀 모델, 게이지 팩터 8 |
+
+이 값들은 시뮬레이션에 그대로 들어갑니다. 전자 타투 잡음은 근전도 잡음 바닥으로, 밴드 배선 저항은 팩 ESR로, 설계된 셀 면적은 셀 모델로 연결됩니다.
+
+### 3D 펜 손목밴드 설계
+```bash
+python3 -m qeaai design --wrist 165        # design_out/ 에 템플릿 SVG, 전자 타투 시트 SVG, 지표 JSON 생성
+```
+- `band_template.svg`를 **배율 100%** 로 인쇄하고, 번호 순서대로 PCL 저온 3D 펜으로 따라 그립니다(12획, 약 5분, PCL 2.2 g). 60 °C 물에 담가 손목 곡률로 굽힙니다.
+- 빨간 점선은 SNSS 배선 잉크 경로입니다. 위 채널은 모듈 → 셀 직렬, 아래 채널은 귀선이라 서로 겹치지 않습니다(단락 검사 포함).
+- `etattoo_electrodes.svg`는 전완 4채널 근전도 전극의 위치와 serpentine 메쉬입니다. 피부가 늘어나도 끊어지지 않는 패턴입니다.
+- 대시보드의 **DESIGN · CHASSIS** 패널에서 손목 둘레를 바꾸면 바로 다시 설계됩니다.
+
+### OS가 VR이 된다 (WebXR)
+- VR 화면 오른쪽의 **ENTER VR** 버튼으로 실제 헤드셋에 들어갑니다(헤드셋이 없으면 `VR NOT SUPPORTED`로 표시). 조종석에 앉으면 OS 패널(FLIGHT / ALLIED IDENTITY / POWER·SNSS / REAL WORLD·TWIN)이 계기판으로 떠 있습니다.
+- **VR 컨트롤러 입력:** 트리거 = 주먹, 그립 = 펴기, 스틱 좌우 = 손목 좌우.
+- **Quest 단독 브라우저:** `adb reverse tcp:8765 tcp:8765`로 연결하고 헤드셋에서 `http://localhost:8765`를 엽니다(WebXR은 localhost나 HTTPS에서만 동작). PC VR(Link)은 PC 브라우저에서 바로 됩니다.
+- **헤드셋 없이:** **몰입 OS** 버튼을 누르면 조종석 시점과 전체 화면으로 같은 경험을 할 수 있습니다.
+
+### Allied Identity 에이전트: "그것이 너이고, 네가 컨트롤 한다"
+음성 비서가 아니라, 근육 신호와 실제 환경을 보고 **스스로 제어하는 AI**입니다([allied_agent.py](qeaai/agent/allied_agent.py)).
+- **근육 → 실제 장치:** 주먹을 **1초 유지**하면 MQTT 액추에이터를 켜고, 손을 펴서 1초 유지하면 끕니다. 명령은 `qeaai/things/<id>/set`으로 갑니다.
+- **자율 판단:**
+  - 타인이 착용하면 모든 액추에이터를 차단합니다.
+  - SOC가 30% 아래면 절전합니다(무선 송신 5%, 화면 0.3 mW).
+  - 실제로 밤이면 화면을 어둡게 합니다.
+  - 실측 돌풍이 10 m/s를 넘으면 경고합니다.
+- **페르소나:** 주로 쓰는 동작, 동작별 힘, 활동 시간대, 비행 성향을 계속 학습하고 `data/allied_persona.json`에 누적합니다("AI가 나 자신을 나타내게").
+- **Claude가 직접 제어(MCP):** 프로젝트 루트의 [.mcp.json](.mcp.json)에 MCP 서버가 등록되어 있습니다. 이 폴더에서 Claude Code를 열면 `qeaai` 도구(`get_status`, `list_things`, `get_thing`, `set_device`, `control`, `get_persona`, `design_band`)가 생기고, Claude가 트윈을 읽고 실제 장치를 제어할 수 있습니다. 먼저 `./run.sh`를 실행해 두세요.
+
+### VPN (WireGuard)
+```bash
+python3 -m qeaai vpn --peer esp32-01 --peer phone      # vpn/ 에 설정 생성 (개인 키 포함, git 제외)
+sudo cp vpn/wg-qeaai.conf /etc/wireguard/ && sudo wg-quick up wg-qeaai
+./run.sh --mqtt-bind 10.77.0.1                          # MQTT 를 VPN 안에서만 열기
+```
+WireGuard 키를 가진 장치만 암호화된 터널로 트윈에 들어옵니다. 게이트웨이 트윈에 `vpn: up/down` 상태가 표시됩니다.
+
 ## 터미널 실행
 
 ```bash
@@ -98,7 +147,7 @@ python3 -m qeaai demo --live       # 실시간 OS 대시보드
 python3 -m qeaai battery           # SNSS_Battery 셀/팩 특성 + 그래핀 양자 커패시턴스 표
 python3 -m qeaai identity          # 본인 인식 정확도 / 타인 거부 평가
 
-pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, 테스트 50개
+pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, 테스트 64개
 ```
 
 외부 의존성 없이 Python 3.10 이상 표준 라이브러리만 사용합니다.
@@ -107,15 +156,19 @@ pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, �
 
 | 명세 [구성] | 모듈 | 구현 내용 |
 |---|---|---|
-| **SNSS_Battery** (그래핀 폴리머 / 멸균 생리 식염수 / PVA) | [qeaai/materials/snss_battery.py](qeaai/materials/snss_battery.py) | 전극 면적·전해질 전도도·분리막으로 용량, ESR, 에너지, 자가방전을 계산하는 셀/팩 모델 |
+| **SNSS_Battery** (그래핀 폴리머 **액정** / 멸균 생리 식염수 / PVA) | [snss_battery.py](qeaai/materials/snss_battery.py), [snss_material.py](qeaai/materials/snss_material.py) | 셀/팩 모델 + **그래핀 산화물 액정** 소재 모델(Onsager 상전이, 3D 펜 압출 배향). 한 소재가 셀·배선·전자 타투 전극·변형 센서 역할을 함 |
 | **QE** (양자화의 첫걸음) | [qeaai/materials/quantum.py](qeaai/materials/quantum.py) | 그래핀 **양자 커패시턴스** C_q(V). 디랙점 근처에서 전체 용량의 최대 ~92%를 제한하는 실제 양자 효과 |
 | **근육 구동** ("물리 엔진 대신 근육") | [qeaai/bio/emg.py](qeaai/bio/emg.py), [qeaai/bio/harvester.py](qeaai/bio/harvester.py) | 전완 4채널 근전도(EMG) 시뮬레이터 + 근육 움직임 에너지 하베스터 |
 | **Allied Identity** ("사람과 호환해야 완성") | [qeaai/identity/allied_identity.py](qeaai/identity/allied_identity.py) | 페어링 전에는 동작하지 않음. 그 사람의 근육 패턴으로 의도를 해석하고, 다른 사람이 착용하면 trust 가 떨어져 제어 거부. 사용하면서 계속 적응 |
+| **Allied Identity** ("그것이 너이고, 네가 컨트롤") | [qeaai/agent/](qeaai/agent/) | 말이 아니라 근육과 실제 환경을 보고 **스스로 장치를 제어하는 에이전트** + 사용자 페르소나 학습 + Claude 용 **MCP 서버** |
 | **Circuit** ("모든 디바이스 호환") | [qeaai/circuit/power.py](qeaai/circuit/power.py) | 팩 전압(4.0→1.0 V)을 DC-DC로 3.3 V로 변환, 부하 소비, 하베스터 충전, 전원 부족(brownout) 처리 |
-| **Network** ("없으면 벙어리") / VPN | [qeaai/network/bus.py](qeaai/network/bus.py) | 토픽 기반 메시지 버스 + HMAC-SHA256 서명(위변조·사칭 차단) |
+| **Network** ("없으면 벙어리") | [qeaai/network/bus.py](qeaai/network/bus.py) | 토픽 기반 메시지 버스 + HMAC-SHA256 서명(위변조·사칭 차단) |
+| **VPN / WIFI** | [qeaai/iot/vpn.py](qeaai/iot/vpn.py) | **WireGuard** 설정 생성: 게이트웨이 + 장치(ESP32·스마트폰). MQTT 를 VPN 안에서만 열기 |
 | **VR** = IoT + 디지털 트윈 | [qeaai/twin/digital_twin.py](qeaai/twin/digital_twin.py) | `device/*/state` 토픽을 구독해서 모든 디바이스 상태를 실시간 미러링, VR 뷰 렌더링 |
 | **Game** ("조종하면 이미 날 수 있다") | [qeaai/game/flight.py](qeaai/game/flight.py) | 주먹=스로틀↑, 펴기=스로틀↓, 손목 좌/우=뱅크. 제어권이 없으면 fail-safe |
 | **OS** ("보고 경험하는 것 모두") | [qeaai/system/kernel.py](qeaai/system/kernel.py) | 위 전부를 200 ms 틱 루프로 묶고 화면(대시보드)으로 보여주는 커널 |
+| **OS 가 VR 이 된다** | [vr3d.js](qeaai/web/static/vr3d.js) | **WebXR**: 실제 VR 헤드셋으로 진입. OS 패널이 3D 조종석 계기판이 되고 VR 컨트롤러가 근육 입력 대용 |
+| **Design & Chassis** ("3D 펜으로 만드는 개체") | [qeaai/design/band.py](qeaai/design/band.py) | 손목 둘레로 SNSS 밴드 설계 → **1:1 인쇄 템플릿**(3D 펜 획 순서), 단락 없는 직렬 배선, 전자 타투 전극 시트 |
 | **IoT / 디지털 트윈** (VR = IoT + 디지털 트윈) | [qeaai/iot/](qeaai/iot/) | MQTT 3.1.1 브로커·클라이언트, 이 컴퓨터의 실측 센서, 실제 날씨·태양 위치, W3C WoT Thing Description |
 | **OS 화면 / VR 렌더링** | [qeaai/web/](qeaai/web/) | 커널 상태를 SSE로 스트리밍하는 서버(표준 라이브러리) + Canvas 3D 화면(외부 라이브러리 없음, 오프라인 동작) |
 
@@ -147,7 +200,7 @@ pip install -e ".[dev]" && pytest  # 설치 후 `qeaai` 명령 사용 가능, �
 2. **"양자"는 소재 수준에서 실재합니다.** 그래핀 양자 커패시턴스는 측정할 수 있는 양자 효과이고, 이 프로젝트의 QE는 여기서 출발합니다. 반면 "양자 아날로그 OS"는 아직 개념 단계입니다. 현재 OS는 일반 디지털 소프트웨어입니다.
 3. **근육 구동 에너지는 µW 단위입니다.** 손목 하베스터는 보통 수십~수백 µW를 내므로, 기기를 구동하기보다는 팩을 보조 충전하는 역할입니다(데모에서 직접 확인할 수 있습니다).
 4. **"신경회로의 깊은 속내"**: 표면 근전도(sEMG)로 알 수 있는 것은 손·손목 근육의 활동 의도입니다. 뇌·신경 내부 상태는 읽을 수 없습니다.
-5. **안전**: 명세의 "생물 자체에 새겨 넣는다"를 신체 이식으로 해석해서는 안 됩니다. 자작 전기화학 셀을 몸에 넣거나 피부 아래 두는 것은 감염, 전해질 누출, 화상 위험이 큽니다. 이 프로젝트는 **착용형(손목시계형) 외부 기기**를 전제로 합니다.
+5. **"생물 자체에 한 땀 한 땀 새겨 넣는다"**: 피부에 붙이는 **그래핀 전자 타투**(두께 1 µm 미만, 피부 주름을 따라 밀착하는 근전도 전극)와, 밴드 직물에 전도성 실로 **꿰매 넣는 배선**으로 구현합니다([snss_material.py](qeaai/materials/snss_material.py), [band.py](qeaai/design/band.py)). 몸 안에 넣는 것은 아닙니다. 피부 접촉 부위에는 5 V 이하의 직류만 쓰고, 상처 난 피부에는 붙이지 않으며, 전해질(식염수 겔)은 밀봉합니다.
 
 ## 로드맵
 

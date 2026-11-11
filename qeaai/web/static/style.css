@@ -65,7 +65,8 @@ button { font: inherit; color: inherit; }
   grid-template-areas:
     "muscle vr power"
     "identity vr qe"
-    "identity twin net";
+    "identity design design"
+    "twin twin net";
 }
 .vr { grid-area: vr; }
 .muscle { grid-area: muscle; }
@@ -74,15 +75,23 @@ button { font: inherit; color: inherit; }
 .qe { grid-area: qe; }
 .twin { grid-area: twin; }
 .net { grid-area: net; }
+.design { grid-area: design; }
+.design-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.design-row input { width: 64px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 4px 6px; font: inherit; }
+.design-row a.btn { text-decoration: none; color: var(--text); font-size: 12px; }
+.design-view { margin-top: 8px; background: #fff; border-radius: 6px; padding: 6px; overflow-x: auto; }
+.design-view img { display: block; width: 100%; min-width: 520px; }
+.design-kv { grid-template-columns: repeat(4, auto 1fr); }
+@media (max-width: 720px) { .design-kv { grid-template-columns: auto 1fr; } }
 
 @media (max-width: 1200px) {
   .grid {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "vr vr" "muscle identity" "power qe" "twin net";
+    grid-template-areas: "vr vr" "muscle identity" "power qe" "design design" "twin net";
   }
 }
 @media (max-width: 720px) {
-  .grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "vr" "muscle" "identity" "power" "qe" "twin" "net"; }
+  .grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "vr" "muscle" "identity" "power" "qe" "design" "twin" "net"; }
   .topbar .spacer { display: none; }
 }
 
@@ -211,3 +220,24 @@ canvas { display: block; width: 100%; }
 .log .sig { color: #4a6072; }
 .t-neural { color: var(--amber); }
 .t-device { color: var(--accent); }
+
+/* --- agent --- */
+.agent { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.agent-head { font-size: 12px; color: var(--accent); font-weight: 700; letter-spacing: 0.04em; display: flex; justify-content: space-between; gap: 6px; }
+.agent-head span { font-weight: 500; color: var(--muted); }
+.agent .kv { margin-top: 6px; }
+.agent-log { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; font-size: 11px; }
+.agent-log li { background: var(--panel-2); border-radius: 4px; padding: 3px 6px; border-left: 2px solid var(--line); }
+.agent-log li.alert { border-left-color: var(--danger); }
+.agent-log li.control, .agent-log li.external { border-left-color: var(--ok); }
+.agent-log li.power { border-left-color: var(--amber); }
+.agent-log li.env { border-left-color: var(--blue); }
+.agent-log time { color: var(--muted); font-family: var(--mono); margin-right: 6px; }
+
+/* --- WebXR 버튼 (Three.js VRButton) --- */
+.vrbtn-wrap { position: absolute; right: 10px; top: 222px; z-index: 2; }
+.vrbtn-wrap > * {
+  position: static !important; left: auto !important; bottom: auto !important; width: auto !important;
+  padding: 6px 12px !important; font: 600 12px var(--mono) !important; border-radius: 6px !important;
+  background: rgba(8, 12, 17, 0.72) !important; border: 1px solid var(--line) !important; opacity: 1 !important;
+}
